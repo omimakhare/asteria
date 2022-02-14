@@ -71,6 +71,7 @@ struct Header
       Metadata* pv_meta;
     };
 
+    uint8_t jit_code[32];
     alignas(max_align_t) char sparam[];
   };
 

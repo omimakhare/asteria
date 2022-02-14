@@ -7,13 +7,64 @@
 #include "../runtime/runtime_error.hpp"
 #include "../runtime/enums.hpp"
 #include "../utils.hpp"
+#include <sys/mman.h>
 
 namespace asteria {
+namespace {
+
+details_avmc_queue::Header*
+do_vm_allocate_headers(uint32_t nhdrs)
+  {
+    const size_t msize = nhdrs * sizeof(details_avmc_queue::Header);
+    void* mptr = ::mmap(nullptr, msize, PROT_READ | PROT_WRITE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if(mptr == MAP_FAILED)
+      ASTERIA_THROW_RUNTIME_ERROR(
+          "could not allocate $2 bytes of virtual memory"
+          "[`mmap()` failed: $1]",
+          format_errno(), msize);
+
+    ::std::memset(mptr, 0xCC, msize);
+    return static_cast<details_avmc_queue::Header*>(mptr);
+  }
+
+void
+do_vm_free_headers(details_avmc_queue::Header* bptr, uint32_t nhdrs)
+  {
+    const size_t msize = nhdrs * sizeof(details_avmc_queue::Header);
+    int err = ::munmap(bptr, msize);
+    ROCKET_ASSERT(err == 0);
+  }
+
+void
+do_vm_protect_headers(details_avmc_queue::Header* bptr, uint32_t nhdrs, int prot)
+  {
+    const size_t msize = nhdrs * sizeof(details_avmc_queue::Header);
+    int err = ::mprotect(bptr, msize, PROT_READ | prot);
+    ROCKET_ASSERT(err == 0);
+  }
+
+extern "C" AIR_Status
+do_call_jit_code(Executive_Context& ctx, const uint8_t* jit_code);
+
+__asm__ (
+"""""""""""""""""""""""""""""""""""""""" R"'''''''''''''''(
+do_call_jit_code:
+
+    pushq %rbx           # push rbx
+    movq %rdi, %rbx      # rbx := ctx
+    jmpq *%rsi           # rsi := jit_code
+
+)'''''''''''''''" """""""""""""""""""""""""""""""""""""""");
+
+}  // namespace
 
 void
 AVMC_Queue::
 do_destroy_nodes(bool xfree) noexcept
   {
+    do_vm_protect_headers(this->m_bptr, this->m_estor, PROT_WRITE);
+
     auto next = this->m_bptr;
     const auto eptr = this->m_bptr + this->m_used;
     while(ROCKET_EXPECT(next != eptr)) {
@@ -40,7 +91,7 @@ do_destroy_nodes(bool xfree) noexcept
     // Deallocate the old table.
     auto bold = ::std::exchange(this->m_bptr, (Header*)0xDEADBEEF);
     auto esold = ::std::exchange(this->m_estor, (size_t)0xBEEFDEAD);
-    ::rocket::freeN<Header>(bold, esold);
+    do_vm_free_headers(bold, esold);
   }
 
 void
@@ -52,8 +103,10 @@ do_reallocate(uint32_t nadd)
     if(nheaders_max - this->m_used < nadd)
       throw ::std::bad_alloc();
 
+    // Allocate non-executable memory here. A call to `finalize()` is necessary
+    // for making this piece of memory executable.
     uint32_t estor = this->m_used + nadd;
-    auto bptr = ::rocket::allocN<Header>(estor);
+    auto bptr = do_vm_allocate_headers(estor);
 
     // Perform a bitwise copy of all contents of the old block.
     // This copies all existent headers and trivial data.
@@ -78,7 +131,7 @@ do_reallocate(uint32_t nadd)
     }
 
     // Deallocate the old table.
-    ::rocket::freeN<Header>(bold, esold);
+    do_vm_free_headers(bold, esold);
   }
 
 details_avmc_queue::Header*
@@ -173,8 +226,82 @@ AVMC_Queue&
 AVMC_Queue::
 finalize()
   {
-    // TODO: Add JIT support.
-    this->do_reallocate(0);
+    if(!this->m_bptr)
+      return *this;
+
+    // Fill in JIT machine code.
+    // At the moment JIT is available on x86_64 only.
+    auto next = this->m_bptr;
+    const auto eptr = this->m_bptr + this->m_used;
+    while(ROCKET_EXPECT(next != eptr)) {
+      auto qnode = next;
+      next += UINT32_C(1) + qnode->nheaders;
+
+      // mov rdi, rbx
+      qnode->jit_code[ 0] = 0x48;
+      qnode->jit_code[ 1] = 0x89;
+      qnode->jit_code[ 2] = 0xDF;
+
+      // lea rsi, [rip - 26]
+      qnode->jit_code[ 3] = 0x48;
+      qnode->jit_code[ 4] = 0x8D;
+      qnode->jit_code[ 5] = 0x35;
+      qnode->jit_code[ 6] = 0xE6;
+      qnode->jit_code[ 7] = 0xFF;
+      qnode->jit_code[ 8] = 0xFF;
+      qnode->jit_code[ 9] = 0xFF;
+
+      // movabs rax, EXEC
+      uintptr_t word;
+      if(qnode->meta_ver == 0)
+        word = reinterpret_cast<uintptr_t>(qnode->pv_exec);
+      else
+        word = reinterpret_cast<uintptr_t>(qnode->pv_meta->exec);
+
+      qnode->jit_code[10] = 0x48;
+      qnode->jit_code[11] = 0xB8;
+      qnode->jit_code[12] = (uint8_t)(word >>  0);
+      qnode->jit_code[13] = (uint8_t)(word >>  8);
+      qnode->jit_code[14] = (uint8_t)(word >> 16);
+      qnode->jit_code[15] = (uint8_t)(word >> 24);
+      qnode->jit_code[16] = (uint8_t)(word >> 32);
+      qnode->jit_code[17] = (uint8_t)(word >> 40);
+      qnode->jit_code[18] = (uint8_t)(word >> 48);
+      qnode->jit_code[19] = (uint8_t)(word >> 56);
+
+      // call rax
+      qnode->jit_code[20] = 0xFF;
+      qnode->jit_code[21] = 0xD0;
+
+      if(next == eptr) {
+        // pop rbx
+        qnode->jit_code[22] = 0x5B;
+        // ret
+        qnode->jit_code[23] = 0xC3;
+        continue;
+      }
+
+      // test al, al
+      qnode->jit_code[22] = 0x84;
+      qnode->jit_code[23] = 0xC0;
+
+      // jz NEXT
+      word = 18 + qnode->nheaders * sizeof(Header);
+
+      qnode->jit_code[24] = 0x0F;
+      qnode->jit_code[25] = 0x84;
+      qnode->jit_code[26] = (uint8_t)(word >>  0);
+      qnode->jit_code[27] = (uint8_t)(word >>  8);
+      qnode->jit_code[28] = (uint8_t)(word >> 16);
+      qnode->jit_code[29] = (uint8_t)(word >> 24);
+
+      // pop rbx
+      qnode->jit_code[30] = 0x5B;
+      // ret
+      qnode->jit_code[31] = 0xC3;
+    }
+
+    do_vm_protect_headers(this->m_bptr, this->m_estor, PROT_EXEC);
     return *this;
   }
 
@@ -182,35 +309,11 @@ AIR_Status
 AVMC_Queue::
 execute(Executive_Context& ctx) const
   {
-    AIR_Status status = air_status_next;
-    auto next = this->m_bptr;
-    const auto eptr = this->m_bptr + this->m_used;
-    while(ROCKET_EXPECT(next != eptr)) {
-      auto qnode = next;
-      next += UINT32_C(1) + qnode->nheaders;
+    if(!this->m_bptr)
+      return air_status_next;
 
-      if(qnode->meta_ver > 1) {
-        // Symbols are available.
-        ASTERIA_RUNTIME_TRY {
-          status = qnode->pv_meta->exec(ctx, qnode);
-        }
-        ASTERIA_RUNTIME_CATCH(Runtime_Error& except) {
-          except.push_frame_plain(qnode->pv_meta->syms, sref(""));
-          throw;
-        }
-      }
-      else if(qnode->meta_ver == 1) {
-        // Symbols are not available.
-        status = qnode->pv_meta->exec(ctx, qnode);
-      }
-      else {
-        // Symbols are not available.
-        status = qnode->pv_exec(ctx, qnode);
-      }
-      if(status != air_status_next)
-        break;
-    }
-    return status;
+    // Use JIT code.
+    return do_call_jit_code(ctx, this->m_bptr->jit_code);
   }
 
 void
