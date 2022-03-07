@@ -215,7 +215,7 @@ do_get_padding(const optV_string& padding)
   }
 
 void
-do_print_value(tinyfmt& fmt, const void* ptr)
+do_print_value_2(tinyfmt& fmt, const void* ptr)
   {
     static_cast<const Value*>(ptr)->print(fmt);
   }
@@ -260,7 +260,7 @@ constexpr char s_char_table[][2] =
 constexpr char s_base16_table[] = "00112233445566778899AaBbCcDdEeFf";
 constexpr char s_base32_table[] = "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz223344556677==";
 constexpr char s_base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/==";
-constexpr char s_spaces[] = " \f\n\r\t\v";
+constexpr char s_spaces_1[] = " \f\n\r\t\v";
 
 // http://www.faqs.org/rfcs/rfc3986.html
 // * Bit 0 indicates whether the character is a reserved character.
@@ -309,7 +309,7 @@ do_xstrchr(const char* str, char c) noexcept
   }
 
 bool
-do_streq_ci(const V_string& str, V_string::shallow_type cmp) noexcept
+do_streq_ci_1(const V_string& str, V_string::shallow_type cmp) noexcept
   {
     if(str.length() != cmp.length())
       return false;
@@ -363,13 +363,13 @@ class PCRE2_Matcher final
         // Check options.
         if(opts) {
           for(const auto& opt : *opts)
-            if(do_streq_ci(opt.as_string(), sref("caseless")))
+            if(do_streq_ci_1(opt.as_string(), sref("caseless")))
               this->m_opts |= PCRE2_CASELESS;
-            else if(do_streq_ci(opt.as_string(), sref("dotall")))
+            else if(do_streq_ci_1(opt.as_string(), sref("dotall")))
               this->m_opts |= PCRE2_DOTALL;
-            else if(do_streq_ci(opt.as_string(), sref("extended")))
+            else if(do_streq_ci_1(opt.as_string(), sref("extended")))
               this->m_opts |= PCRE2_EXTENDED;
-            else if(do_streq_ci(opt.as_string(), sref("multiline")))
+            else if(do_streq_ci_1(opt.as_string(), sref("multiline")))
               this->m_opts |= PCRE2_MULTILINE;
             else if(!opt.as_string().empty())
               ASTERIA_THROW_RUNTIME_ERROR(
@@ -1169,7 +1169,7 @@ std_string_hex_decode(V_string text)
     while(nread != text.size()) {
       // Read and identify a character.
       char c = text[nread++];
-      const char* pos = do_xstrchr(s_spaces, c);
+      const char* pos = do_xstrchr(s_spaces_1, c);
       if(pos) {
         // The character is a whitespace.
         if(reg != 1)
@@ -1267,7 +1267,7 @@ std_string_base32_decode(V_string text)
     while(nread != text.size()) {
       // Read and identify a character.
       char c = text[nread++];
-      const char* pos = do_xstrchr(s_spaces, c);
+      const char* pos = do_xstrchr(s_spaces_1, c);
       if(pos) {
         // The character is a whitespace.
         if(reg != 1)
@@ -1387,7 +1387,7 @@ std_string_base64_decode(V_string text)
     while(nread != text.size()) {
       // Read and identify a character.
       char c = text[nread++];
-      const char* pos = do_xstrchr(s_spaces, c);
+      const char* pos = do_xstrchr(s_spaces_1, c);
       if(pos) {
         // The character is a whitespace.
         if(reg != 1)
@@ -1662,7 +1662,7 @@ std_string_format(V_string templ, cow_vector<Value> values)
     cow_vector<::rocket::formatter> insts;
     insts.reserve(values.size());
     for(const auto& val : values)
-      insts.push_back({ do_print_value, &val });
+      insts.push_back({ do_print_value_2, &val });
 
     // Compose the string into a stream.
     ::rocket::tinyfmt_str fmt;

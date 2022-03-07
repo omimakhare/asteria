@@ -404,7 +404,7 @@ do_format_nonrecursive(const Value& value, bool json5, Indenter&& indent)
   }
 
 opt<Punctuator>
-do_accept_punctuator_opt(Token_Stream& tstrm, initializer_list<Punctuator> accept)
+do_accept_punctuator_opt_1(Token_Stream& tstrm, initializer_list<Punctuator> accept)
   {
     auto qtok = tstrm.peek_opt();
     if(!qtok)
@@ -421,22 +421,22 @@ do_accept_punctuator_opt(Token_Stream& tstrm, initializer_list<Punctuator> accep
     return punct;
   }
 
-struct S_xparse_array
+struct S_jparse_array
   {
     V_array arr;
   };
 
-struct S_xparse_object
+struct S_jparse_object
   {
     V_object obj;
     phsh_string key;
     Source_Location key_sloc;
   };
 
-using Xparse = ::rocket::variant<S_xparse_array, S_xparse_object>;
+using Jparse = ::rocket::variant<S_jparse_array, S_jparse_object>;
 
 void
-do_accept_object_key(S_xparse_object& ctxo, Token_Stream& tstrm)
+do_accept_object_key(S_jparse_object& ctxo, Token_Stream& tstrm)
   {
     auto qtok = tstrm.peek_opt();
     if(!qtok)
@@ -459,7 +459,7 @@ do_accept_object_key(S_xparse_object& ctxo, Token_Stream& tstrm)
     ctxo.key_sloc = qtok->sloc();
     tstrm.shift();
 
-    auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_colon });
+    auto kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_colon });
     if(!kpunct)
       throw Compiler_Error(Compiler_Error::M_status(),
                 compiler_status_colon_expected, tstrm.next_sloc());
@@ -470,7 +470,7 @@ do_parse_nonrecursive(Token_Stream& tstrm)
   {
     // Implement a non-recursive descent parser.
     Value value;
-    cow_vector<Xparse> stack;
+    cow_vector<Jparse> stack;
 
     for(;;) {
       // Accept a value. No other things such as closed brackets are allowed.
@@ -489,10 +489,10 @@ do_parse_nonrecursive(Token_Stream& tstrm)
               tstrm.shift();
 
               // Open an array.
-              auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_bracket_cl });
+              auto kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_bracket_cl });
               if(!kpunct) {
                 // Descend into the new array.
-                stack.emplace_back(S_xparse_array());
+                stack.emplace_back(S_jparse_array());
                 continue;
               }
 
@@ -505,10 +505,10 @@ do_parse_nonrecursive(Token_Stream& tstrm)
               tstrm.shift();
 
               // Open an object.
-              auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_brace_cl });
+              auto kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_brace_cl });
               if(!kpunct) {
                 // Descend into the new object.
-                stack.emplace_back(S_xparse_object());
+                stack.emplace_back(S_jparse_object());
                 do_accept_object_key(stack.mut_back().as<1>(), tstrm);
                 continue;
               }
@@ -590,14 +590,14 @@ do_parse_nonrecursive(Token_Stream& tstrm)
           ctxa.arr.emplace_back(::std::move(value));
 
           // Look for the next element.
-          auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_bracket_cl, punctuator_comma });
+          auto kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_bracket_cl, punctuator_comma });
           if(!kpunct)
             throw Compiler_Error(Compiler_Error::M_status(),
                       compiler_status_closed_bracket_or_comma_expected, tstrm.next_sloc());
 
           // Check for termination of this array.
           if(*kpunct == punctuator_comma) {
-            kpunct = do_accept_punctuator_opt(tstrm, { punctuator_bracket_cl });
+            kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_bracket_cl });
             if(!kpunct) {
               // Look for the next element.
               break;
@@ -615,14 +615,14 @@ do_parse_nonrecursive(Token_Stream& tstrm)
                       compiler_status_duplicate_key_in_object, ctxo.key_sloc);
 
           // Look for the next element.
-          auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_brace_cl, punctuator_comma });
+          auto kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_brace_cl, punctuator_comma });
           if(!kpunct)
             throw Compiler_Error(Compiler_Error::M_status(),
                       compiler_status_closed_brace_or_comma_expected, tstrm.next_sloc());
 
           // Check for termination of this array.
           if(*kpunct == punctuator_comma) {
-            kpunct = do_accept_punctuator_opt(tstrm, { punctuator_brace_cl });
+            kpunct = do_accept_punctuator_opt_1(tstrm, { punctuator_brace_cl });
             if(!kpunct) {
               // Look for the next element.
               do_accept_object_key(ctxo, tstrm);

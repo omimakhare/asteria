@@ -255,13 +255,13 @@ main(void)
 #endif
 
 // These are generated data. Do not edit by hand!
-struct decmult_F
+struct decmult_2
   {
     double bound;
     uint64_t mant;
     int exp2;
   }
-constexpr s_decmult_F[] =
+constexpr s_decmult_2[] =
   {
     {                       0,  0x6DB4616541769502, +1134 },  // 1.0e-324
     { 0x1.8000000000000p-1073,  0x57C3811DCDF87735, +1131 },  // 1.0e-323
@@ -897,7 +897,7 @@ constexpr s_decmult_F[] =
     { 0x1.C7B1F3CAC7434p+1019,  0x63CAC186BA81C60E,  -962 },  // 1.0e+307
     { 0x1.1CCF385EBC8A0p+1023,  0x4FD5679EFB9B04D8,  -965 },  // 1.0e+308
   };
-static_assert(size(s_decmult_F) == 633);
+static_assert(size(s_decmult_2) == 633);
 
 inline uint64_t
 do_get_max_bias(uint64_t ireg, uint32_t add, bool single)
@@ -918,7 +918,7 @@ do_xfrexp_F_dec(uint64_t& mant, int& exp, const double& value, bool single)
 
     // Locate the last number in the table that is <= `freg`.
     uint32_t bpos = 1;
-    uint32_t epos = static_cast<uint32_t>(size(s_decmult_F));
+    uint32_t epos = static_cast<uint32_t>(size(s_decmult_2));
     for(;;) {
       // Stop if the range is empty.
       if(bpos == epos) {
@@ -928,7 +928,7 @@ do_xfrexp_F_dec(uint64_t& mant, int& exp, const double& value, bool single)
 
       // Get the median.
       uint32_t mpos = (bpos + epos) / 2;
-      const double& med = s_decmult_F[mpos].bound;
+      const double& med = s_decmult_2[mpos].bound;
 
       // Stops immediately if `freg` equals `med`.
       if(::std::memcmp(&freg, &med, sizeof(double)) == 0) {
@@ -942,7 +942,7 @@ do_xfrexp_F_dec(uint64_t& mant, int& exp, const double& value, bool single)
       else
         bpos = mpos + 1;
     }
-    const auto& mult = s_decmult_F[bpos];
+    const auto& mult = s_decmult_2[bpos];
 
     // Extract the biased exponent and mantissa without the hidden bit.
     // This function requires `freg` to be normalized, finite and positive.

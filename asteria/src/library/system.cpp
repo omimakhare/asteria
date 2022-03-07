@@ -21,7 +21,7 @@ namespace asteria {
 namespace {
 
 opt<Punctuator>
-do_accept_punctuator_opt(Token_Stream& tstrm, initializer_list<Punctuator> accept)
+do_accept_punctuator_opt_2(Token_Stream& tstrm, initializer_list<Punctuator> accept)
   {
     auto qtok = tstrm.peek_opt();
     if(!qtok)
@@ -84,7 +84,7 @@ do_accept_object_key(S_xparse_object& ctxo, Token_Stream& tstrm, Scope_type scop
     ctxo.key_sloc = qtok->sloc();
     tstrm.shift();
 
-    auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_colon, punctuator_assign });
+    auto kpunct = do_accept_punctuator_opt_2(tstrm, { punctuator_colon, punctuator_assign });
     if(!kpunct)
       throw Compiler_Error(Compiler_Error::M_status(),
                 compiler_status_colon_expected, tstrm.next_sloc());
@@ -114,7 +114,7 @@ do_conf_parse_value_nonrecursive(Token_Stream& tstrm)
               tstrm.shift();
 
               // Open an array.
-              auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_bracket_cl });
+              auto kpunct = do_accept_punctuator_opt_2(tstrm, { punctuator_bracket_cl });
               if(!kpunct) {
                 // Descend into the new array.
                 stack.emplace_back(S_xparse_array());
@@ -130,7 +130,7 @@ do_conf_parse_value_nonrecursive(Token_Stream& tstrm)
               tstrm.shift();
 
               // Open an object.
-              auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_brace_cl });
+              auto kpunct = do_accept_punctuator_opt_2(tstrm, { punctuator_brace_cl });
               if(!kpunct) {
                 // Descend into the new object.
                 stack.emplace_back(S_xparse_object());
@@ -221,7 +221,7 @@ do_conf_parse_value_nonrecursive(Token_Stream& tstrm)
           ctxa.arr.emplace_back(::std::move(value));
 
           // Check for termination of this array.
-          auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_bracket_cl });
+          auto kpunct = do_accept_punctuator_opt_2(tstrm, { punctuator_bracket_cl });
           if(!kpunct) {
             // Look for the next element.
             break;
@@ -238,7 +238,7 @@ do_conf_parse_value_nonrecursive(Token_Stream& tstrm)
                       compiler_status_duplicate_key_in_object, ctxo.key_sloc);
 
           // Check for termination of this array.
-          auto kpunct = do_accept_punctuator_opt(tstrm, { punctuator_brace_cl });
+          auto kpunct = do_accept_punctuator_opt_2(tstrm, { punctuator_brace_cl });
           if(!kpunct) {
             // Look for the next element.
             do_accept_object_key(ctxo, tstrm, scope_node);

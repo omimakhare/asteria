@@ -211,12 +211,12 @@ main(void)
 #endif  // 0
 
 // These are generated data. Do not edit by hand!
-struct decmult_F
+struct decmult_1
   {
     uint64_t mant;
     int exp2;
   }
-constexpr s_decmult_F[] =
+constexpr s_decmult_1[] =
   {
     { 0x5F94EE55D417EF58, -1138 },  // 1.0e-343
     { 0x777A29EB491DEB2E, -1135 },  // 1.0e-342
@@ -871,7 +871,7 @@ constexpr s_decmult_F[] =
     { 0x71EC7CF2B1D0CC73, +1021 },  // 1.0e+307
     { 0x4733CE17AF227FC8, +1025 },  // 1.0e+308
   };
-static_assert(size(s_decmult_F) == 652);
+static_assert(size(s_decmult_1) == 652);
 
 template<typename floatT, typename storageT, int E, int M>
 double
@@ -1521,11 +1521,11 @@ cast_F(double& value, double lower, double upper, bool single) noexcept
               freg = 0;
               break;
             }
-            if(mpos >= size(s_decmult_F)) {
+            if(mpos >= size(s_decmult_1)) {
               freg = HUGE_VAL;
               break;
             }
-            const auto& mult = s_decmult_F[mpos];
+            const auto& mult = s_decmult_1[mpos];
 
             // Adjust `ireg` such that its MSB is non-zero.
             int sh = ROCKET_LZCNT64(ireg);
