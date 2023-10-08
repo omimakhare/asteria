@@ -16,6 +16,18 @@
 #include "../utils.hpp"
 namespace asteria {
 
+void
+Reference::
+do_throw_not_dereferenceable() const
+  {
+    ::rocket::sprintf_and_throw<::std::invalid_argument>(
+          "Reference: `%s` not dereferenceable ",
+          describe_xref(this->m_xref));
+  }
+
+
+
+#if 0
 const Value&
 Reference::
 do_dereference_readonly_slow() const
@@ -298,5 +310,5 @@ dereference_unset() const
 
     return bpos->apply_unset(*qval);
   }
-
+#endif
 }  // namespace asteria

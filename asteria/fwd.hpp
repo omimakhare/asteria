@@ -159,7 +159,7 @@ class AVMC_Queue;
 // Runtime
 enum Xop : uint8_t;
 enum AIR_Status : uint8_t;
-enum PTC_Aware : int8_t;  // This is a bitmask!
+enum PTC_Aware : uint8_t;
 struct Abstract_Hooks;
 class Runtime_Error;
 class Reference;
@@ -706,14 +706,19 @@ ROCKET_CONST
 const char*
 describe_type(Type type) noexcept;
 
-// Value comparison results
-enum Compare : uint8_t
+// Reference types
+enum Xref : uint8_t
   {
-    compare_unordered  = 0,  // The LHS operand is unordered with the RHS operand.
-    compare_greater    = 1,  // The LHS operand is greater than the RHS operand.
-    compare_less       = 2,  // The LHS operand is less than the RHS operand.
-    compare_equal      = 3,  // The LHS operand is equal to the RHS operand.
+    xref_invalid    = 0,
+    xref_void       = 1,
+    xref_temporary  = 2,
+    xref_variable   = 3,
+    xref_ptc        = 4,
   };
+
+ROCKET_CONST
+const char*
+describe_xref(Xref xref) noexcept;
 
 // Stack frame types
 enum Frame_Type : uint8_t
@@ -805,6 +810,15 @@ enum Compiler_Status : uint32_t
 ROCKET_CONST
 const char*
 describe_compiler_status(Compiler_Status status) noexcept;
+
+// Value comparison results
+enum Compare : uint8_t
+  {
+    compare_unordered  = 0,  // The LHS operand is unordered with the RHS operand.
+    compare_greater    = 1,  // The LHS operand is greater than the RHS operand.
+    compare_less       = 2,  // The LHS operand is less than the RHS operand.
+    compare_equal      = 3,  // The LHS operand is equal to the RHS operand.
+  };
 
 // API versioning of the standard library
 enum API_Version : uint32_t
