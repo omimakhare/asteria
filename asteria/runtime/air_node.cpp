@@ -885,14 +885,21 @@ struct Traits_check_argument
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         if(up.u8v[0]) {
-          // The argument is passed by reference, but it always has to be
-          // dereferenceable.
+          // Pass the argument by reference.
           ctx.stack().top().dereference_readonly();
-          return air_status_next;
+        }
+        else {
+          // Pass the argument by value.
+          ctx.stack().mut_top().dereference_copy();
         }
 
-        // The argument is passed by copy, so convert it to a temporary.
-        ctx.stack().mut_top().mut_temporary();
+
+        // Ensure the argument is dereferenceable.
+
+
+
+        auto& top = ctx.stack().mut_top();
+        (void) (up.u8v[0] ? top.dereference_readonly() : top.mut_temporary());
         return air_status_next;
       }
   };

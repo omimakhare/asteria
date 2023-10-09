@@ -209,6 +209,16 @@ class Reference
       { return unerase_pointer_cast<PTC_Arguments>(this->m_ptc);  }
 
     void
+    check_function_result(Global_Context& global)
+      {
+        if(this->m_xref == xref_ptc)
+          this->do_use_function_result_slow(global);
+
+        if((this->m_xref != xref_void) && (this->m_xref != xref_temporary) && (this->m_xref != xref_variable))
+          this->do_throw_not_dereferenceable();
+      }
+
+    void
     collect_variables(Variable_HashMap& staged, Variable_HashMap& temp) const;
 
     // Get the target value.
@@ -222,7 +232,10 @@ class Reference
       }
 
     Value&
-    dereference_temporary()
+    dereference_mutable() const;
+
+    Value&
+    dereference_copy()
       {
         if((this->m_xref == xref_temporary) && this->m_mods.empty())
           return this->m_value;
@@ -241,9 +254,6 @@ class Reference
         this->m_xref = xref_temporary;
         return this->m_value;
       }
-
-    Value&
-    dereference_mutable() const;
 
     Value
     dereference_unset() const;

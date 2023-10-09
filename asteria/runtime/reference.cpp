@@ -20,57 +20,79 @@ void
 Reference::
 do_throw_not_dereferenceable() const
   {
-    ::rocket::sprintf_and_throw<::std::invalid_argument>(
-          "Reference: `%s` not dereferenceable ",
-          describe_xref(this->m_xref));
+    ASTERIA_THROW_RUNTIME_ERROR((
+        "Reference type `$1` not dereferenceable"),
+        describe_xref(this->m_xref));
   }
 
-
-
 #if 0
+
 const Value&
 Reference::
 do_dereference_readonly_slow() const
   {
     const Value* qval;
 
-    // Get the root value.
-    switch(this->index()) {
-      case index_invalid:
+    switch(this->m_xref) {
+      case xref_invalid:
         ASTERIA_THROW_RUNTIME_ERROR((
             "Attempt to use a bypassed variable or reference"));
 
-      case index_void:
+      case xref_void:
         ASTERIA_THROW_RUNTIME_ERROR((
             "Attempt to use the result of a function call which returned no value"));
 
-      case index_temporary:
+      case xref_temporary:
         qval = &(this->m_value);
         break;
 
-      case index_variable: {
+      case xref_variable: {
         auto qvar = unerase_cast<Variable*>(this->m_var);
         if(!qvar)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Attempt to use a moved-away reference (this is probably a bug)"));
 
         if(qvar->is_uninitialized())
-          ASTERIA_THROW_RUNTIME_ERROR((
-              "Attempt to reference an uninitialized variable"));
+          ASTERIA_THROW_RUNTIME_ERROR(("Attempt to use an uninitialized variable"));
 
         qval = &(qvar->get_value());
         break;
       }
 
-      case index_ptc_args:
-        ASTERIA_THROW_RUNTIME_ERROR((
-            "Tail call wrapper not dereferenceable"));
+      case xref_ptc:
+        ASTERIA_THROW_RUNTIME_ERROR(("Tail call wrapper not dereferenceable"));
 
       default:
-        ASTERIA_TERMINATE((
-            "Invalid reference type enumeration (index `$1`)"),
-            this->index());
+        ASTERIA_TERMINATE(("Invalid reference type `$1`"), this->m_xref);
     }
+  }
+
+
+
+
+
+void
+Reference::
+do_use_function_result_slow(Global_Context& global);
+
+void
+Reference::
+collect_variables(Variable_HashMap& staged, Variable_HashMap& temp) const;
+
+Value&
+Reference::
+dereference_mutable() const;
+
+Value
+Reference::
+dereference_unset() const;
+
+
+
+const Value&
+Reference::
+do_dereference_readonly_slow() const
+  {
 
     // Apply modifiers.
     auto bpos = this->m_mods.begin();
