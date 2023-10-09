@@ -209,13 +209,6 @@ class Reference
       { return unerase_pointer_cast<PTC_Arguments>(this->m_ptc);  }
 
     void
-    check_function_result(Global_Context& global)
-      {
-        if(this->m_xref == xref_ptc)
-          this->do_use_function_result_slow(global);
-      }
-
-    void
     collect_variables(Variable_HashMap& staged, Variable_HashMap& temp) const;
 
     // Get the target value.
@@ -249,7 +242,7 @@ class Reference
         return this->m_value;
       }
 
-    Value&&
+    Value&
     dereference_mutable() const;
 
     Value

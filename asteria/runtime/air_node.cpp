@@ -24,21 +24,6 @@
 namespace asteria {
 namespace {
 
-// FIXME: hacks; will be removed
-using bmask32 = ::rocket::bit_mask<uint32_t>;
-using bmask64 = ::rocket::bit_mask<uint64_t>;
-using bmword = ::rocket::bit_mask<uintptr_t>;
-
-constexpr bmask32 M_null      = { type_null };
-constexpr bmask32 M_boolean   = { type_boolean };
-constexpr bmask32 M_integer   = { type_integer };
-constexpr bmask32 M_real      = { type_real };
-constexpr bmask32 M_string    = { type_string };
-constexpr bmask32 M_opaque    = { type_opaque };
-constexpr bmask32 M_function  = { type_function };
-constexpr bmask32 M_array     = { type_array };
-constexpr bmask32 M_object    = { type_object };
-
 bool&
 do_rebind_nodes(bool& dirty, cow_vector<AIR_Node>& code, Abstract_Context& ctx)
   {
@@ -118,18 +103,9 @@ do_evaluate_subexpression(Executive_Context& ctx, bool assign, const AVMC_Queue&
     return air_status_next;
   }
 
-Value&
-do_get_first_operand(Reference_Stack& stack, bool assign)
-  {
-    return assign
-        ? stack.top().dereference_mutable()
-        : stack.mut_top().mut_temporary();
-  }
-
 AIR_Status
 do_execute_block(const AVMC_Queue& queue, Executive_Context& ctx)
   {
-    // Execute the body on a new context.
     Executive_Context ctx_next(Executive_Context::M_plain(), ctx);
     AIR_Status status;
     try {
@@ -352,7 +328,7 @@ struct Traits_initialize_variable
     make_uparam(bool& /*reachable*/, const AIR_Node::S_initialize_variable& altr)
       {
         AVMC_Queue::Uparam up;
-        up.u8v[0] = altr.immutable;
+        up.u8v[0] = altr.immutable ? Variable::state_immutable : Variable::state_mutable;
         return up;
       }
 
@@ -366,13 +342,12 @@ struct Traits_initialize_variable
         ctx.stack().pop();
 
         // Get the variable back.
-        auto var = ctx.stack().top().get_variable_opt();
+        auto var = ctx.stack().top().unphase_variable_opt();
         ROCKET_ASSERT(var && var->is_uninitialized());
         ctx.stack().pop();
 
         // Initialize it.
-        const auto vstat = up.u8v[0] ? Variable::state_immutable : Variable::state_mutable;
-        var->initialize(::std::move(val), vstat);
+        var->initialize(::std::move(val), (Variable::State) up.u8v[0]);
         return air_status_next;
       }
   };
@@ -466,8 +441,7 @@ struct Traits_switch_statement
             if(i < target_index) {
               // Inject bypassed variables into the scope.
               for(const auto& name : sp.names_added[i])
-                ctx_body.insert_named_reference(name)
-                    .set_invalid();
+                ctx_body.insert_named_reference(name);
             }
             else {
               // Execute the body of this clause.
@@ -764,16 +738,11 @@ struct Traits_try_statement
     AIR_Status
     execute(Executive_Context& ctx, const Sparam_try_catch& sp)
       try {
-        // This is almost identical to JavaScript.
         // Execute the `try` block. If no exception is thrown, this will have
-        // little overhead.
+        // little overhead. This is almost identical to JavaScript.
         auto status = do_execute_block(sp.queue_try, ctx);
-        if(status != air_status_return_ref)
-          return status;
-
-        // This must not be PTC'd, otherwise exceptions thrown from tail calls
-        // won't be caught.
-        ctx.stack().mut_top().finish_call(ctx.global());
+        if(status == air_status_return_ref)
+          ctx.stack().mut_top().check_function_result(ctx.global());
         return status;
       }
       catch(Runtime_Error& except) {
