@@ -1145,42 +1145,6 @@ do_pop_positional_arguments(Reference_Stack& alt_stack, Reference_Stack& stack, 
     return alt_stack;
   }
 
-inline
-V_integer
-do_integer_check_add(V_integer x, V_integer y)
-  {
-    V_integer result;
-    if(ROCKET_ADD_OVERFLOW(x, y, &result))
-      ASTERIA_THROW_RUNTIME_ERROR((
-          "Integer addition overflow (operands were `$1` and `$2`)"),
-          x, y);
-    return result;
-  }
-
-inline
-V_integer
-do_integer_check_sub(V_integer x, V_integer y)
-  {
-    V_integer result;
-    if(ROCKET_SUB_OVERFLOW(x, y, &result))
-      ASTERIA_THROW_RUNTIME_ERROR((
-          "Integer subtraction overflow (operands were `$1` and `$2`)"),
-          x, y);
-    return result;
-  }
-
-inline
-V_integer
-do_integer_check_mul(V_integer x, V_integer y)
-  {
-    V_integer result;
-    if(ROCKET_MUL_OVERFLOW(x, y, &result))
-      ASTERIA_THROW_RUNTIME_ERROR((
-          "Integer multiplication overflow (operands were `$1` and `$2`)"),
-          x, y);
-    return result;
-  }
-
 struct Traits_function_call
   {
     static
@@ -1265,6 +1229,7 @@ struct Traits_member_access
       {
         Reference_Modifier::S_object_key xmod = { name };
         ctx.stack().mut_top().push_modifier(::std::move(xmod));
+
         ctx.stack().top().dereference_readonly();
         return air_status_next;
       }
@@ -1296,7 +1261,6 @@ struct Traits_push_unnamed_array
         V_array array;
         array.resize(up.u32);
         for(auto it = array.mut_rbegin();  it != array.rend();  ++it) {
-          // Write elements backwards.
           *it = ctx.stack().top().dereference_readonly();
           ctx.stack().pop();
         }
@@ -1379,7 +1343,7 @@ struct Traits_return_statement
         }
 
         // The result is passed by copy, so convert it to a temporary.
-        ctx.stack().mut_top().mut_temporary();
+        ctx.stack().mut_top().dereference_copy();
         return air_status_return_ref;
       }
   };
@@ -1426,35 +1390,41 @@ struct Traits_apply_xop_inc
       {
         // This operator is unary. `assign` is `true` for the postfix variant
         // and `false` for the prefix variant.
-        auto& lhs = ctx.stack().top().dereference_mutable();
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = top.dereference_mutable();
 
-        // Increment the value and replace the top.
-        switch(bmask32({lhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& val = lhs.mut_integer();
-            auto oldval = val;
-            val = do_integer_check_add(val, 1);
-            if(up.u8v[0])  // postfix
-              ctx.stack().mut_top().set_temporary(oldval);
-            return air_status_next;
-          }
+        if(lhs.type() == type_integer) {
+          V_integer& val = lhs.mut_integer();
 
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            auto& val = lhs.mut_real();
-            auto oldval = val;
-            val ++;
-            if(up.u8v[0])  // postfix
-              ctx.stack().mut_top().set_temporary(oldval);
-            return air_status_next;
-          }
-
-          default:
+          // Increment the value with overflow checking.
+          V_integer result;
+          if(ROCKET_ADD_OVERFLOW(val, 1, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
-                "Postfix increment not applicable (operand was `$1`)"),
-                lhs);
+                "Integer increment overflow (operand was `$1`)"),
+                val);
+
+          if(up.u8v[0])
+            top.set_temporary(val);
+
+          val = result;
+          return air_status_next;
         }
+        else if(lhs.type() == type_real) {
+          V_real& val = lhs.mut_real();
+
+          // Overflow will result in an infinity, so this is safe.
+          V_real result = val + 1;
+
+          if(up.u8v[0])
+            top.set_temporary(val);
+
+          val = result;
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Postfix increment not applicable (operand was `$1`)"),
+              lhs);
       }
   };
 
@@ -1482,35 +1452,41 @@ struct Traits_apply_xop_dec
       {
         // This operator is unary. `assign` is `true` for the postfix variant
         // and `false` for the prefix variant.
-        auto& lhs = ctx.stack().top().dereference_mutable();
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = top.dereference_mutable();
 
-        // Decrement the value and replace the top with the old one.
-        switch(bmask32({lhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& val = lhs.mut_integer();
-            auto oldval = val;
-            val = do_integer_check_sub(val, 1);
-            if(up.u8v[0])  // postfix
-              ctx.stack().mut_top().set_temporary(oldval);
-            return air_status_next;
-          }
+        if(lhs.type() == type_integer) {
+          V_integer& val = lhs.mut_integer();
 
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            auto& val = lhs.mut_real();
-            auto oldval = val;
-            val --;
-            if(up.u8v[0])  // postfix
-              ctx.stack().mut_top().set_temporary(oldval);
-            return air_status_next;
-          }
-
-          default:
+          // Decrement the value with overflow checking.
+          V_integer result;
+          if(ROCKET_SUB_OVERFLOW(val, 1, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
-                "Postfix decrement not applicable (operand was `$1`)"),
-                lhs);
+                "Integer decrement overflow (operand was `$1`)"),
+                val);
+
+          if(up.u8v[0])
+            top.set_temporary(val);
+
+          val = result;
+          return air_status_next;
         }
+        else if(lhs.type() == type_real) {
+          V_real& val = lhs.mut_real();
+
+          // Overflow will result in an infinity, so this is safe.
+          V_real result = val - 1;
+
+          if(up.u8v[0])
+            top.set_temporary(val);
+
+          val = result;
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Postfix decrement not applicable (operand was `$1`)"),
+              lhs);
       }
   };
 
@@ -1530,30 +1506,28 @@ struct Traits_apply_xop_subscr
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
+        auto& top = ctx.stack().mut_top();
 
-        // Push a modifier depending the type of `rhs`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            Reference_Modifier::S_array_index xmod = { rhs.as_integer() };
-            ctx.stack().mut_top().push_modifier(::std::move(xmod));
-            ctx.stack().top().dereference_readonly();
-            return air_status_next;
-          }
+        if(rhs.type() == type_integer) {
+          // Push an array subscript.
+          Reference_Modifier::S_array_index xmod = { rhs.as_integer() };
+          top.push_modifier(::std::move(xmod));
 
-          case M_string: {
-            ROCKET_ASSERT(rhs.is_string());
-            Reference_Modifier::S_object_key xmod = { rhs.as_string() };
-            ctx.stack().mut_top().push_modifier(::std::move(xmod));
-            ctx.stack().top().dereference_readonly();
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Subscript not valid (value was `$1`)"),
-                rhs);
+          top.dereference_readonly();
+          return air_status_next;
         }
+        else if(rhs.type() == type_string) {
+          // Push an object subscript.
+          Reference_Modifier::S_object_key xmod = { rhs.as_string() };
+          top.push_modifier(::std::move(xmod));
+
+          top.dereference_readonly();
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Subscript not valid (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -1580,8 +1554,11 @@ struct Traits_apply_xop_pos
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        // N.B. This is one of the few operators that work on all types.
-        do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
+
+        // There is nothing to do.
+        (void) rhs;
         return air_status_next;
       }
   };
@@ -1609,29 +1586,37 @@ struct Traits_apply_xop_neg
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the opposite of the operand.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            auto& val = rhs.mut_integer();
-            val = do_integer_check_sub(0, val);
-            return air_status_next;
-          }
+        if(rhs.type() == type_integer) {
+          V_integer& val = rhs.mut_integer();
 
-          case M_real: {
-            ROCKET_ASSERT(rhs.is_real());
-            auto& val = rhs.mut_real();
-            val = -val;
-            return air_status_next;
-          }
-
-          default:
+          // Negate the value with overflow checks.
+          V_integer result;
+          if(ROCKET_SUB_OVERFLOW(0, val, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
-                "Logical negation not applicable (operand was `$1`)"),
-                rhs);
+                "Integer negation overflow (operand was `$1`)"),
+                val);
+
+          val = result;
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          V_real& val = rhs.mut_real();
+
+          // Flip the sign bit of the value.
+          uint64_t bits;
+          ::memcpy(&bits, &val, sizeof(val));
+          bits ^= 0x8000000000000000ULL;
+
+          ::memcpy(&val, &bits, sizeof(val));
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Arithmetic negation not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -1658,37 +1643,25 @@ struct Traits_apply_xop_notb
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the bitwise complement of the operand.
-        switch(bmask32({rhs.type()})) {
-          case M_boolean: {
-            ROCKET_ASSERT(rhs.is_boolean());
-            auto& val = rhs.mut_boolean();
-            val = !val;
-            return air_status_next;
-          }
-
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            auto& val = rhs.mut_integer();
-            val = ~val;
-            return air_status_next;
-          }
-
-          case M_string: {
-            ROCKET_ASSERT(rhs.is_string());
-            auto& val = rhs.mut_string();
-            for(auto it = val.mut_begin();  it != val.end();  ++it)
-              *it = static_cast<char>(~*it);
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Bitwise NOT not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          V_integer& val = rhs.mut_integer();
+          val = ~val;
+          return air_status_next;
         }
+        else if(rhs.type() == type_string) {
+          // Flip all bits of every byte in the value and replace the top.
+          V_string& val = rhs.mut_string();
+          for(auto it = val.mut_begin();  it != val.end();  ++it)
+            *it = static_cast<char>(*it ^ 0xFF);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Bitwise NOT not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -1715,10 +1688,10 @@ struct Traits_apply_xop_notl
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
         // Perform logical NOT operation on the operand.
-        // N.B. This is one of the few operators that work on all types.
         rhs = !rhs.test();
         return air_status_next;
       }
@@ -1737,10 +1710,12 @@ struct Traits_apply_xop_unset
     AIR_Status
     execute(Executive_Context& ctx)
       {
-        // This operator is unary. `assign` is ignored.
-        // Unset the reference and store the result as a temporary.
-        auto val = ctx.stack().top().dereference_unset();
-        ctx.stack().mut_top().set_temporary(::std::move(val));
+        // This operator is unary.
+        auto& top = ctx.stack().mut_top();
+
+        // Unset the last element and return it as a temporary.
+        auto val = top.dereference_unset();
+        top.set_temporary(::std::move(val));
         return air_status_next;
       }
   };
@@ -1768,39 +1743,33 @@ struct Traits_apply_xop_countof
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the number of bytes or elements in the operand.
-        switch(bmask32({rhs.type()})) {
-          case M_null: {
-            ROCKET_ASSERT(rhs.is_null());
-            rhs = 0;
-            return air_status_next;
-          }
-
-          case M_string: {
-            ROCKET_ASSERT(rhs.is_string());
-            rhs = rhs.as_string().ssize();
-            return air_status_next;
-          }
-
-          case M_array: {
-            ROCKET_ASSERT(rhs.is_array());
-            rhs = rhs.as_array().ssize();
-            return air_status_next;
-          }
-
-          case M_object: {
-            ROCKET_ASSERT(rhs.is_object());
-            rhs = rhs.as_object().ssize();
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`countof` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_null) {
+          // `countof null` is defined to be zero.
+          rhs = V_integer(0);
+          return air_status_next;
         }
+        else if(rhs.type() == type_string) {
+          // Yield the number of bytes in the stirng.
+          rhs = V_integer(rhs.as_string().size());
+          return air_status_next;
+        }
+        else if(rhs.type() == type_array) {
+          // Yield the number of elements in the array.
+          rhs = V_integer(rhs.as_array().size());
+          return air_status_next;
+        }
+        else if(rhs.type() == type_object) {
+          // Yield the number of key-value pairs in the object.
+          rhs = V_integer(rhs.as_object().size());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`countof` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -1827,11 +1796,11 @@ struct Traits_apply_xop_typeof
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the type name of the operand, which is constant.
-        // N.B. This is one of the few operators that work on all types.
-        rhs = sref(describe_type(rhs.type()));
+        // Yield the type name of the operand, as a string.
+        rhs = V_string(::rocket::sref(describe_type(rhs.type())));
         return air_status_next;
       }
   };
@@ -1859,27 +1828,19 @@ struct Traits_apply_xop_sqrt
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the square root of the operand as a real number.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            rhs = ::std::sqrt(rhs.as_real());
-            return air_status_next;
-          }
-
-          case M_real: {
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::sqrt(rhs.as_real());
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__sqrt` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.is_real()) {
+          // Yield the arithmetic square root of the operand. Integers are
+          // converted to real numbers.
+          rhs = ::std::sqrt(rhs.as_real());
+          return air_status_next;
         }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__sqrt` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -1906,28 +1867,23 @@ struct Traits_apply_xop_isnan
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the operand is an arithmetic type and is a NaN.
-        // Note an integer is never a NaN.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            rhs = false;
-            return air_status_next;
-          }
-
-          case M_real: {
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::isnan(rhs.as_real());
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__isnan` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is never a NaN.
+          rhs = false;
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Checks whether the operand is a NaN.
+          rhs = ::std::isnan(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__isnan` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -1954,28 +1910,23 @@ struct Traits_apply_xop_isinf
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the operand is an arithmetic type and is an infinity.
-        // Note an integer is never an infinity.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            rhs = false;
-            return air_status_next;
-          }
-
-          case M_real: {
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::isinf(rhs.as_real());
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__isinf` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is never an infinity.
+          rhs = false;
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Checks whether the operand is an infinity.
+          rhs = ::std::isinf(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__isinf` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2002,30 +1953,35 @@ struct Traits_apply_xop_abs
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the absolute value of the operand.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            auto& val = rhs.mut_integer();
-            auto mask = do_integer_check_sub(val, 1) >> 63;
-            val = (val ^ mask) - mask;
-            return air_status_next;
-          }
+        if(rhs.type() == type_integer) {
+          V_integer& val = rhs.mut_integer();
 
-          case M_real: {
-            ROCKET_ASSERT(rhs.is_real());
-            auto& val = rhs.mut_real();
-            val = ::fabs(val);
-            return air_status_next;
-          }
-
-          default:
+          // Negate of the operand with overflow checks.
+          V_integer neg_val;
+          if(ROCKET_SUB_OVERFLOW(0, val, &neg_val))
             ASTERIA_THROW_RUNTIME_ERROR((
-                "`__abs` not applicable (operand was `$1`)"),
-                rhs);
+                "Integer negation overflow (operand was `$1`)"),
+                val);
+
+          val ^= (val ^ neg_val) & (val >> 63);
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          V_real& val = rhs.mut_real();
+
+          // Clear the sign bit of the operand.
+          V_real result = ::std::fabs(val);
+
+          val = result;
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__abs` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2052,27 +2008,34 @@ struct Traits_apply_xop_sign
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Get the sign bit of the operand and extend it to 64 bits.
-        switch(bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(rhs.is_integer());
-            rhs.mut_integer() >>= 63;
-            return air_status_next;
-          }
+        if(rhs.type() == type_integer) {
+          V_integer& val = rhs.mut_integer();
 
-          case M_real: {
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::signbit(rhs.as_real()) ? -1 : 0;
-            return air_status_next;
-          }
+          // Populate the operand with its sign bit.
+          V_integer result = val >> 63;
 
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__sign` not applicable (operand was `$1`)"),
-                rhs);
+          val = result;
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          V_real& val = rhs.mut_real();
+
+          // Populate the operand with its sign bit.
+          uint64_t bits;
+          ::memcpy(&bits, &val, sizeof(val));
+          bits &= 0x000FFFFFFFFFFFFFULL;
+          bits |= 0x3FF0000000000000ULL;
+
+          ::memcpy(&val, &bits, sizeof(val));
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__sign` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2099,25 +2062,22 @@ struct Traits_apply_xop_round
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::round(rhs.as_real());
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__round` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Round the operand to the nearest integer.
+          rhs.mut_real() = ::std::round(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__round` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2144,25 +2104,22 @@ struct Traits_apply_xop_floor
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer towards negative infinity.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::floor(rhs.as_real());
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__floor` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Round the operand to the nearest integer towards negative infinity.
+          rhs.mut_real() = ::std::floor(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__floor` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2189,25 +2146,22 @@ struct Traits_apply_xop_ceil
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer towards positive infinity.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::ceil(rhs.as_real());
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__ceil` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Round the operand to the nearest integer towards positive infinity.
+          rhs.mut_real() = ::std::ceil(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__ceil` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2234,25 +2188,22 @@ struct Traits_apply_xop_trunc
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer towards zero.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = ::std::trunc(rhs.as_real());
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__trunc` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Truncate the operand to the nearest integer towards zero.
+          rhs.mut_real() = ::std::trunc(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__trunc` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2279,25 +2230,22 @@ struct Traits_apply_xop_iround
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = safe_double_to_int64(::std::round(rhs.as_real()));
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__iround` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Round the operand to the nearest integer.
+          rhs = safe_double_to_int64(::std::round(rhs.as_real()));
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__iround` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2324,25 +2272,22 @@ struct Traits_apply_xop_ifloor
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer towards negative infinity.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = safe_double_to_int64(::std::floor(rhs.as_real()));
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__ifloor` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Round the operand to the nearest integer towards negative infinity.
+          rhs = safe_double_to_int64(::std::floor(rhs.as_real()));
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__ifloor` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2369,25 +2314,22 @@ struct Traits_apply_xop_iceil
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer towards positive infinity.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = safe_double_to_int64(::std::ceil(rhs.as_real()));
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__iceil` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Round the operand to the nearest integer towards positive infinity.
+          rhs = safe_double_to_int64(::std::ceil(rhs.as_real()));
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__iceil` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2414,25 +2356,22 @@ struct Traits_apply_xop_itrunc
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         // This operator is unary.
-        auto& rhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& rhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Round the operand to the nearest integer towards zero.
-        // This is a no-op for type `integer`.
-        switch(bmask32({rhs.type()})) {
-          case M_integer:
-            ROCKET_ASSERT(rhs.is_integer());
-            return air_status_next;
-
-          case M_real:
-            ROCKET_ASSERT(rhs.is_real());
-            rhs = safe_double_to_int64(::std::trunc(rhs.as_real()));
-            return air_status_next;
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "`__itrunc` not applicable (operand was `$1`)"),
-                rhs);
+        if(rhs.type() == type_integer) {
+          // An integer is always exact.
+          return air_status_next;
         }
+        else if(rhs.type() == type_real) {
+          // Truncate the operand to the nearest integer towards zero.
+          rhs = safe_double_to_int64(rhs.as_real());
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "`__itrunc` not applicable (operand was `$1`)"),
+              rhs);
       }
   };
 
@@ -2461,11 +2400,11 @@ struct Traits_apply_xop_cmp_eq
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the two operands equal.
-        // Unordered operands are not equal.
-        // N.B. This is one of the few operators that work on all types.
+        // Check whether the two operands are equal. Unordered values are
+        // considered to compare unequal.
         lhs = lhs.compare(rhs) == compare_equal;
         return air_status_next;
       }
@@ -2496,11 +2435,11 @@ struct Traits_apply_xop_cmp_ne
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the two operands don't equal.
-        // Unordered operands are not equal.
-        // N.B. This is one of the few operators that work on all types.
+        // Check whether the two operands are not equal. Unordered values
+        // are considered to compare unequal.
         lhs = lhs.compare(rhs) != compare_equal;
         return air_status_next;
       }
@@ -2531,11 +2470,12 @@ struct Traits_apply_xop_cmp_lt
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the LHS operand is less than the RHS operand.
-        // Throw an exception if they are unordered.
-        auto cmp = lhs.compare(rhs);
+        // Check whether the LHS operand is less than the RHS operand. If
+        // they are unordered, an exception shall be thrown.
+        Compare cmp = lhs.compare(rhs);
         if(cmp == compare_unordered)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Values not comparable (operands were `$1` and `$2`)"),
@@ -2571,11 +2511,12 @@ struct Traits_apply_xop_cmp_gt
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the LHS operand is greater than the RHS operand.
-        // Throw an exception if they are unordered.
-        auto cmp = lhs.compare(rhs);
+        // Check whether the LHS operand is greater than the RHS operand. If
+        // they are unordered, an exception shall be thrown.
+        Compare cmp = lhs.compare(rhs);
         if(cmp == compare_unordered)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Values not comparable (operands were `$1` and `$2`)"),
@@ -2611,11 +2552,12 @@ struct Traits_apply_xop_cmp_lte
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the LHS operand is less than or equal to the RHS operand.
-        // Throw an exception if they are unordered.
-        auto cmp = lhs.compare(rhs);
+        // Check whether the LHS operand is less than or equal to the RHS
+        // operand. If they are unordered, an exception shall be thrown.
+        Compare cmp = lhs.compare(rhs);
         if(cmp == compare_unordered)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Values not comparable (operands were `$1` and `$2`)"),
@@ -2651,11 +2593,12 @@ struct Traits_apply_xop_cmp_gte
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Check whether the LHS operand is greater than or equal to the RHS operand.
-        // Throw an exception if they are unordered.
-        auto cmp = lhs.compare(rhs);
+        // Check whether the LHS operand is greater than or equal to the RHS
+        // operand. If they are unordered, an exception shall be thrown.
+        Compare cmp = lhs.compare(rhs);
         if(cmp == compare_unordered)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Values not comparable (operands were `$1` and `$2`)"),
@@ -2691,31 +2634,20 @@ struct Traits_apply_xop_cmp_3way
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // Perform 3-way comparison on both operands.
-        // N.B. This is one of the few operators that work on all types.
-        auto cmp = lhs.compare(rhs);
-        switch(cmp) {
-          case compare_unordered:
-            lhs = sref("[unordered]");
-            return air_status_next;
-
-          case compare_less:
-            lhs = -1;
-            return air_status_next;
-
-          case compare_equal:
-            lhs = 0;
-            return air_status_next;
-
-          case compare_greater:
-            lhs = +1;
-            return air_status_next;
-
-          default:
-            ROCKET_ASSERT(false);
-        }
+        // Perform 3-way comparison of both operands.
+        Compare cmp = lhs.compare(rhs);
+        if(cmp == compare_equal)
+          lhs = 0;
+        else if(cmp == compare_less)
+          lhs = -1;
+        else if(cmp == compare_greater)
+          lhs = +1;
+        else  // `compare_unordered`
+          lhs = sref("[unordered]");
+        return air_status_next;
       }
   };
 
@@ -2744,10 +2676,10 @@ struct Traits_apply_xop_cmp_un
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
         // Check whether the two operands are unordered.
-        // N.B. This is one of the few operators that work on all types.
         lhs = lhs.compare(rhs) == compare_unordered;
         return air_status_next;
       }
