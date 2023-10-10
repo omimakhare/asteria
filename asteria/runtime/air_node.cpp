@@ -149,7 +149,7 @@ template<typename ContainerT>
 inline
 void
 do_collect_variables_for_each(ContainerT& cont, Variable_HashMap& staged,
-                          Variable_HashMap& temp)
+                              Variable_HashMap& temp)
   {
     for(const auto& r : cont)
       r.collect_variables(staged, temp);
@@ -1131,18 +1131,14 @@ do_invoke_tail(Reference& self, const Source_Location& sloc, const cow_function&
     return air_status_return_ref;
   }
 
-Reference_Stack&
+void
 do_pop_positional_arguments(Reference_Stack& alt_stack, Reference_Stack& stack, size_t count)
   {
     alt_stack.clear();
-
-    size_t nargs = count;
-    ROCKET_ASSERT(nargs <= stack.size());
-    while(nargs != 0)
-      alt_stack.push() = ::std::move(stack.mut_top(--nargs));
-
+    ROCKET_ASSERT(count <= stack.size());
+    for(size_t k = count - 1;  k != SIZE_MAX;  --k)
+      alt_stack.push() = ::std::move(stack.mut_top(k));
     stack.pop(count);
-    return alt_stack;
   }
 
 struct Traits_function_call
@@ -2639,14 +2635,14 @@ struct Traits_apply_xop_cmp_3way
 
         // Perform 3-way comparison of both operands.
         Compare cmp = lhs.compare(rhs);
-        if(cmp == compare_equal)
-          lhs = 0;
-        else if(cmp == compare_less)
-          lhs = -1;
-        else if(cmp == compare_greater)
-          lhs = +1;
-        else  // `compare_unordered`
+        if(cmp == compare_unordered)
           lhs = sref("[unordered]");
+        else {
+          V_integer r = -1;
+          r += cmp != compare_less;
+          r += cmp == compare_greater;
+          lhs = r;
+        }
         return air_status_next;
       }
   };
@@ -2710,47 +2706,51 @@ struct Traits_apply_xop_add
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // For the `boolean` type, perform logical OR of the operands.
-        // For the `integer` and `real` types, perform arithmetic addition.
-        // For the `string` type, concatenate them.
-        switch(bmask32({lhs.type()}) | bmask32({rhs.type()})) {
-          case M_boolean: {
-            ROCKET_ASSERT(lhs.is_boolean());
-            ROCKET_ASSERT(rhs.is_boolean());
-            lhs.mut_boolean() |= rhs.as_boolean();
-            return air_status_next;
-          }
+        if(lhs.is_boolean() && rhs.is_boolean()) {
+          V_boolean& val = lhs.mut_boolean();
+          V_boolean other = rhs.as_boolean();
 
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            ROCKET_ASSERT(rhs.is_integer());
-            auto& val = lhs.mut_integer();
-            val = do_integer_check_add(val, rhs.as_integer());
-            return air_status_next;
-          }
-
-          case M_real | M_integer:
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            ROCKET_ASSERT(rhs.is_real());
-            lhs.mut_real() += rhs.as_real();
-            return air_status_next;
-          }
-
-          case M_string: {
-            ROCKET_ASSERT(lhs.is_string());
-            ROCKET_ASSERT(rhs.is_string());
-            lhs.mut_string() += rhs.as_string();
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Addition not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+          // Perform logical OR of the operands.
+          val |= other;
+          return air_status_next;
         }
+        else if(lhs.is_integer() && rhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
+          V_integer other = rhs.as_integer();
+
+          // Perform arithmetic addition with overflow checking.
+          V_integer result;
+          if(ROCKET_ADD_OVERFLOW(val, other, &result))
+            ASTERIA_THROW_RUNTIME_ERROR((
+                "Integer addition overflow (operands were `$1` and `$2`)"),
+                val, other);
+
+          val = result;
+          return air_status_next;
+        }
+        else if(lhs.is_real() && rhs.is_real()) {
+          V_real& val = lhs.mut_real();
+          V_real other = rhs.as_real();
+
+          // Overflow will result in an infinity, so this is safe.
+          val += other;
+          return air_status_next;
+        }
+        else if(lhs.is_string() && rhs.is_string()) {
+          V_string& val = lhs.mut_string();
+          V_string other = rhs.as_string();
+
+          // Concatenate the two strings.
+          val.append(other);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Addition not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
@@ -2779,39 +2779,43 @@ struct Traits_apply_xop_sub
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // For the `boolean` type, perform logical XOR of the operands.
-        // For the `integer` and `real` types, perform arithmetic subtraction.
-        switch(bmask32({lhs.type()}) | bmask32({rhs.type()})) {
-          case M_boolean: {
-            ROCKET_ASSERT(lhs.is_boolean());
-            ROCKET_ASSERT(rhs.is_boolean());
-            lhs.mut_boolean() ^= rhs.as_boolean();
-            return air_status_next;
-          }
+        if(lhs.is_boolean() && rhs.is_boolean()) {
+          V_boolean& val = lhs.mut_boolean();
+          V_boolean other = rhs.as_boolean();
 
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            ROCKET_ASSERT(rhs.is_integer());
-            auto& val = lhs.mut_integer();
-            val = do_integer_check_sub(val, rhs.as_integer());
-            return air_status_next;
-          }
-
-          case M_real | M_integer:
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            ROCKET_ASSERT(rhs.is_real());
-            lhs.mut_real() -= rhs.as_real();
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Subtraction not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+          // Perform logical XOR of the operands.
+          val ^= other;
+          return air_status_next;
         }
+        else if(lhs.is_integer() && rhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
+          V_integer other = rhs.as_integer();
+
+          // Perform arithmetic subtraction with overflow checking.
+          V_integer result;
+          if(ROCKET_SUB_OVERFLOW(val, other, &result))
+            ASTERIA_THROW_RUNTIME_ERROR((
+                "Integer subtraction overflow (operands were `$1` and `$2`)"),
+                val, other);
+
+          val = result;
+          return air_status_next;
+        }
+        else if(lhs.is_real() && rhs.is_real()) {
+          V_real& val = lhs.mut_real();
+          V_real other = rhs.as_real();
+
+          // Overflow will result in an infinity, so this is safe.
+          val -= other;
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Subtraction not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
@@ -2837,6 +2841,79 @@ struct Traits_apply_xop_mul
     AIR_Status
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
+        // This operator is binary.
+        const auto& rhs = ctx.stack().top().dereference_readonly();
+        ctx.stack().pop();
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
+
+        if(lhs.is_boolean() && rhs.is_boolean()) {
+          V_boolean& val = lhs.mut_boolean();
+          V_boolean other = rhs.as_boolean();
+
+          // Perform logical AND of the operands.
+          val &= other;
+          return air_status_next;
+        }
+        else if(lhs.is_integer() && rhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
+          V_integer other = rhs.as_integer();
+
+          // Perform arithmetic multiplication with overflow checking.
+          V_integer result;
+          if(ROCKET_MUL_OVERFLOW(val, other, &result))
+            ASTERIA_THROW_RUNTIME_ERROR((
+                "Integer multiplication overflow (operands were `$1` and `$2`)"),
+                val, other);
+
+          val = result;
+          return air_status_next;
+        }
+        else if(lhs.is_real() && rhs.is_real()) {
+          V_real& val = lhs.mut_real();
+          V_real other = rhs.as_real();
+
+          // Overflow will result in an infinity, so this is safe.
+          val *= other;
+          return air_status_next;
+        }
+        else if(lhs.is_string() && rhs.is_integer()) {
+          V_string& val = lhs.mut_string();
+          V_integer other = rhs.as_integer();
+
+          // Concatenate the two strings.
+          val.append(other);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Multiplication not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();

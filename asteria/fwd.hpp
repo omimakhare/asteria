@@ -814,10 +814,10 @@ describe_compiler_status(Compiler_Status status) noexcept;
 // Value comparison results
 enum Compare : uint8_t
   {
-    compare_unordered  = 0,  // The LHS operand is unordered with the RHS operand.
-    compare_greater    = 1,  // The LHS operand is greater than the RHS operand.
-    compare_less       = 2,  // The LHS operand is less than the RHS operand.
-    compare_equal      = 3,  // The LHS operand is equal to the RHS operand.
+    compare_unordered  = 0b00,
+    compare_greater    = 0b01,
+    compare_less       = 0b10,
+    compare_equal      = 0b11,
   };
 
 // API versioning of the standard library
@@ -825,7 +825,7 @@ enum API_Version : uint32_t
   {
     api_version_none       = 0x00000000,  // no standard library
     api_version_0001_0000  = 0x00010000,  // version 1.0
-    api_version_sentinel /* auto inc */,  // [subtract one to get the maximum version number]
+    api_version_sentinel   /* auto */,    // (max version + 1)
     api_version_latest     = 0xFFFFFFFF,  // everything
   };
 
