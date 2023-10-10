@@ -848,7 +848,7 @@ struct Traits_simple_status
       {
         AVMC_Queue::Uparam up;
         up.u8v[0] = weaken_enum(altr.status);
-        reachable = false;
+        reachable = altr.status != air_status_next;
         return up;
       }
 
@@ -885,21 +885,14 @@ struct Traits_check_argument
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
         if(up.u8v[0]) {
-          // Pass the argument by reference.
+          // The argument is passed by reference, but it always has to be
+          // dereferenceable.
           ctx.stack().top().dereference_readonly();
-        }
-        else {
-          // Pass the argument by value.
-          ctx.stack().mut_top().dereference_copy();
+          return air_status_next;
         }
 
-
-        // Ensure the argument is dereferenceable.
-
-
-
-        auto& top = ctx.stack().mut_top();
-        (void) (up.u8v[0] ? top.dereference_readonly() : top.mut_temporary());
+        // The argument is passed by copy, so convert it to a temporary.
+        ctx.stack().mut_top().dereference_copy();
         return air_status_next;
       }
   };
@@ -1025,13 +1018,9 @@ struct Traits_define_function
     AIR_Status
     execute(Executive_Context& ctx, const Sparam_func& sp)
       {
-        // Rewrite nodes in the body as necessary.
         AIR_Optimizer optmz(sp.opts);
         optmz.rebind(&ctx, sp.params, sp.code_body);
-        auto qtarget = optmz.create_function(sp.sloc, sp.func);
-
-        // Push the function as a temporary.
-        ctx.stack().push().set_temporary(::std::move(qtarget));
+        ctx.stack().push().set_temporary(optmz.create_function(sp.sloc, sp.func));
         return air_status_next;
       }
   };
@@ -1071,8 +1060,8 @@ struct Traits_branch_expression
       {
         // Check the value of the condition.
         return ctx.stack().top().dereference_readonly().test()
-                  ? do_evaluate_subexpression(ctx, up.u8v[0], sp.queues[0])
-                  : do_evaluate_subexpression(ctx, up.u8v[0], sp.queues[1]);
+                    ? do_evaluate_subexpression(ctx, up.u8v[0], sp.queues[0])
+                    : do_evaluate_subexpression(ctx, up.u8v[0], sp.queues[1]);
       }
   };
 
@@ -1134,11 +1123,11 @@ AIR_Status
 do_invoke_tail(Reference& self, const Source_Location& sloc, const cow_function& target,
                PTC_Aware ptc, Reference_Stack&& stack)
   {
-    // Set packed arguments for this PTC, and return `air_status_return_ref` to
-    // allow the result to be unpacked outside; otherwise a null reference is
-    // returned instead of this PTC wrapper, which can then never be unpacked.
+    // Pack arguments for this PTC, and return `air_status_return_ref` to allow
+    // the result to be unpacked outside; otherwise a null reference is returned
+    // instead of this PTC wrapper, which can then never be unpacked.
     stack.push() = ::std::move(self);
-    self.set_ptc_args(::rocket::make_refcnt<PTC_Arguments>(sloc, ptc, target, ::std::move(stack)));
+    self.set_ptc(::rocket::make_refcnt<PTC_Arguments>(sloc, ptc, target, ::std::move(stack)));
     return air_status_return_ref;
   }
 
@@ -1367,11 +1356,10 @@ struct Traits_return_statement
     AVMC_Queue::Uparam
     make_uparam(bool& reachable, const AIR_Node::S_return_statement& altr)
       {
-        reachable = false;
-
         AVMC_Queue::Uparam up;
         up.u8v[0] = altr.by_ref;
         up.u8v[1] = altr.is_void;
+        reachable = false;
         return up;
       }
 
