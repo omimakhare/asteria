@@ -1393,7 +1393,7 @@ struct Traits_apply_xop_inc
           V_integer& val = lhs.mut_integer();
 
           // Increment the value with overflow checking.
-          V_integer result;
+          int64_t result;
           if(ROCKET_ADD_OVERFLOW(val, 1, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
                 "Integer increment overflow (operand was `$1`)"),
@@ -1409,7 +1409,7 @@ struct Traits_apply_xop_inc
           V_real& val = lhs.mut_real();
 
           // Overflow will result in an infinity, so this is safe.
-          V_real result = val + 1;
+          double result = val + 1;
 
           if(up.u8v[0])
             top.set_temporary(val);
@@ -1455,7 +1455,7 @@ struct Traits_apply_xop_dec
           V_integer& val = lhs.mut_integer();
 
           // Decrement the value with overflow checking.
-          V_integer result;
+          int64_t result;
           if(ROCKET_SUB_OVERFLOW(val, 1, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
                 "Integer decrement overflow (operand was `$1`)"),
@@ -1471,7 +1471,7 @@ struct Traits_apply_xop_dec
           V_real& val = lhs.mut_real();
 
           // Overflow will result in an infinity, so this is safe.
-          V_real result = val - 1;
+          double result = val - 1;
 
           if(up.u8v[0])
             top.set_temporary(val);
@@ -1589,7 +1589,7 @@ struct Traits_apply_xop_neg
           V_integer& val = rhs.mut_integer();
 
           // Negate the value with overflow checks.
-          V_integer result;
+          int64_t result;
           if(ROCKET_SUB_OVERFLOW(0, val, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
                 "Integer negation overflow (operand was `$1`)"),
@@ -1969,7 +1969,7 @@ struct Traits_apply_xop_abs
           V_real& val = rhs.mut_real();
 
           // Clear the sign bit of the operand.
-          V_real result = ::std::fabs(val);
+          double result = ::std::fabs(val);
 
           val = result;
           return air_status_next;
@@ -2011,7 +2011,7 @@ struct Traits_apply_xop_sign
           V_integer& val = rhs.mut_integer();
 
           // Populate the operand with its sign bit.
-          V_integer result = val >> 63;
+          int64_t result = val >> 63;
 
           val = result;
           return air_status_next;
@@ -2722,7 +2722,7 @@ struct Traits_apply_xop_add
           V_integer other = rhs.as_integer();
 
           // Perform arithmetic addition with overflow checking.
-          V_integer result;
+          int64_t result;
           if(ROCKET_ADD_OVERFLOW(val, other, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
                 "Integer addition overflow (operands were `$1` and `$2`)"),
@@ -2795,7 +2795,7 @@ struct Traits_apply_xop_sub
           V_integer other = rhs.as_integer();
 
           // Perform arithmetic subtraction with overflow checking.
-          V_integer result;
+          int64_t result;
           if(ROCKET_SUB_OVERFLOW(val, other, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
                 "Integer subtraction overflow (operands were `$1` and `$2`)"),
@@ -2837,6 +2837,37 @@ struct Traits_apply_xop_mul
         return up;
       }
 
+    template<typename ContainerT>
+    static
+    void
+    do_duplicate_sequence_common(ContainerT& container, int64_t count)
+      {
+        if(count < 0)
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Negative duplication count (operand was `$2`)"),
+              count);
+
+        if(container.empty() || (count == 1))
+          return;
+
+        if(count == 0) {
+          container.clear();
+          return;
+        }
+
+        // Calculate the result length with overflow checking.
+        int64_t rlength;
+        if(ROCKET_MUL_OVERFLOW((int64_t) container.size(), count, &rlength) || (rlength > PTRDIFF_MAX))
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Data length overflow (`$1` * `$2` > `$3`)"),
+              container.size(), count, PTRDIFF_MAX);
+
+        // Duplicate elements, using binary exponential backoff.
+        while(container.ssize() < rlength)
+          container.append(container.begin(),
+              container.begin() + min(rlength - container.ssize(), container.ssize()));
+      }
+
     ROCKET_FLATTEN static
     AIR_Status
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
@@ -2860,7 +2891,7 @@ struct Traits_apply_xop_mul
           V_integer other = rhs.as_integer();
 
           // Perform arithmetic multiplication with overflow checking.
-          V_integer result;
+          int64_t result;
           if(ROCKET_MUL_OVERFLOW(val, other, &result))
             ASTERIA_THROW_RUNTIME_ERROR((
                 "Integer multiplication overflow (operands were `$1` and `$2`)"),
@@ -2879,115 +2910,42 @@ struct Traits_apply_xop_mul
         }
         else if(lhs.is_string() && rhs.is_integer()) {
           V_string& val = lhs.mut_string();
-          V_integer other = rhs.as_integer();
+          V_integer count = rhs.as_integer();
 
-          // Concatenate the two strings.
-          val.append(other);
+          // Duplicate the string.
+          do_duplicate_sequence_common(val, count);
+          return air_status_next;
+        }
+        else if(lhs.is_integer() && rhs.is_string()) {
+          V_integer count = lhs.as_integer();
+          lhs = rhs.as_string();
+          V_string& val = lhs.mut_string();
+
+          // Duplicate the string.
+          do_duplicate_sequence_common(val, count);
+          return air_status_next;
+        }
+        else if(lhs.is_array() && rhs.is_integer()) {
+          V_array& val = lhs.mut_array();
+          V_integer count = rhs.as_integer();
+
+          // Duplicate the array.
+          do_duplicate_sequence_common(val, count);
+          return air_status_next;
+        }
+        else if(lhs.is_integer() && rhs.is_array()) {
+          V_integer count = lhs.as_integer();
+          lhs = rhs.as_array();
+          V_array& val = lhs.mut_array();
+
+          // Duplicate the array.
+          do_duplicate_sequence_common(val, count);
           return air_status_next;
         }
         else
           ASTERIA_THROW_RUNTIME_ERROR((
               "Multiplication not applicable (operands were `$1` and `$2`)"),
               lhs, rhs);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        // This operator is binary.
-        const auto& rhs = ctx.stack().top().dereference_readonly();
-        ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
-
-        // For the `boolean` type, perform logical AND of the operands.
-        // For the `integer` and `real` types, perform arithmetic multiplication.
-        // If either operand is an `integer` and the other is a `string`, duplicate the string.
-        switch(bmask32({lhs.type()}) | bmask32({rhs.type()})) {
-          case M_boolean: {
-            ROCKET_ASSERT(lhs.is_boolean());
-            ROCKET_ASSERT(rhs.is_boolean());
-            lhs.mut_boolean() &= rhs.as_boolean();
-            return air_status_next;
-          }
-
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            ROCKET_ASSERT(rhs.is_integer());
-            auto& val = lhs.mut_integer();
-            val = do_integer_check_mul(val, rhs.as_integer());
-            return air_status_next;
-          }
-
-          case M_real | M_integer:
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            ROCKET_ASSERT(rhs.is_real());
-            lhs.mut_real() *= rhs.as_real();
-            return air_status_next;
-          }
-
-          case M_string | M_integer: {
-            cow_string str = lhs.is_string() ? ::std::move(lhs.mut_string()) : rhs.as_string();
-            int64_t n = rhs.is_integer() ? rhs.as_integer() : lhs.as_integer();
-
-            // Optimize for special cases.
-            if(n < 0) {
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "Negative string duplicate count (value was `$2`)"),
-                  n);
-            }
-            else if((n == 0) || str.empty()) {
-              str.clear();
-            }
-            else if(str.size() > str.max_size() / static_cast<uint64_t>(n)) {
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "String length overflow (`$1` * `$2` > `$3`)"),
-                  str.size(), n, str.max_size());
-            }
-            else if(str.size() == 1) {
-              str.append(static_cast<size_t>(n - 1), str.front());
-            }
-            else {
-              size_t total = str.size();
-              str.append(total * static_cast<size_t>(n - 1), '*');
-              char* ptr = str.mut_data();
-
-              while(total <= str.size() / 2) {
-                ::std::memcpy(ptr + total, ptr, total);
-                total *= 2;
-              }
-              if(total < str.size())
-                ::std::memcpy(ptr + total, ptr, str.size() - total);
-            }
-            lhs = ::std::move(str);
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Multiplication not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
-        }
       }
   };
 
@@ -3016,44 +2974,40 @@ struct Traits_apply_xop_div
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // For the `integer` and `real` types, perform arithmetic division.
-        switch(bmask32({lhs.type()}) | bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& x = lhs.mut_integer();
-            ROCKET_ASSERT(rhs.is_integer());
-            auto y = rhs.as_integer();
+        if(lhs.is_integer() && rhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
+          V_integer other = rhs.as_integer();
 
-            if(y == 0)
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "Integer division by zero (operands were `$1` and `$2`)"),
-                  x, y);
-
-            if((x == INT64_MIN) && (y == -1))
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "Integer division overflow (operands were `$1` and `$2`)"),
-                  x, y);
-
-            x = x / y;
-
-            return air_status_next;
-          }
-
-          case M_real | M_integer:
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            ROCKET_ASSERT(rhs.is_real());
-            lhs.mut_real() /= rhs.as_real();
-            return air_status_next;
-          }
-
-          default:
+          // The divisor shall not be zero. Also, dividing `INT64_MIN` by `-1`
+          // would cause the quotient to overflow, which shall be prevented.
+          if(other == 0)
             ASTERIA_THROW_RUNTIME_ERROR((
-                "Division not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+                "Zero as divisor (operands were `$1` and `$2`)"),
+                val, other);
+
+          if((val == INT64_MIN) && (other == -1))
+            ASTERIA_THROW_RUNTIME_ERROR((
+                "Integer division overflow (operands were `$1` and `$2`)"),
+                val, other);
+
+          val /= other;
+          return air_status_next;
         }
+        else if(lhs.is_real() && rhs.is_real()) {
+          V_real& val = lhs.mut_real();
+          V_real other = rhs.as_real();
+
+          // This is always correct for floating-point numbers.
+          val /= other;
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Division not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
@@ -3082,44 +3036,40 @@ struct Traits_apply_xop_mod
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // For the `integer` and `real` types, perform arithmetic modulo.
-        switch(bmask32({lhs.type()}) | bmask32({rhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& x = lhs.mut_integer();
-            ROCKET_ASSERT(rhs.is_integer());
-            auto y = rhs.as_integer();
+        if(lhs.is_integer() && rhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
+          V_integer other = rhs.as_integer();
 
-            if(y == 0)
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "Integer division by zero (operands were `$1` and `$2`)"),
-                  x, y);
-
-            if((x == INT64_MIN) && (y == -1))
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "Integer division overflow (operands were `$1` and `$2`)"),
-                  x, y);
-
-            x = x % y;
-
-            return air_status_next;
-          }
-
-          case M_real | M_integer:
-          case M_real: {
-            ROCKET_ASSERT(lhs.is_real());
-            ROCKET_ASSERT(rhs.is_real());
-            lhs = ::std::fmod(lhs.as_real(), rhs.as_real());
-            return air_status_next;
-          }
-
-          default:
+          // The divisor shall not be zero. Also, dividing `INT64_MIN` by `-1`
+          // would cause the quotient to overflow, which shall be prevented.
+          if(other == 0)
             ASTERIA_THROW_RUNTIME_ERROR((
-                "Modulo not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+                "Zero as divisor (operands were `$1` and `$2`)"),
+                val, other);
+
+          if((val == INT64_MIN) && (other == -1))
+            ASTERIA_THROW_RUNTIME_ERROR((
+                "Integer division overflow (operands were `$1` and `$2`)"),
+                val, other);
+
+          val %= other;
+          return air_status_next;
         }
+        else if(lhs.is_real() && rhs.is_real()) {
+          V_real& val = lhs.mut_real();
+          V_real other = rhs.as_real();
+
+          // This is always correct for floating-point numbers.
+          val = ::std::fmod(val, other);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Modulo not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
    };
 
@@ -3145,6 +3095,47 @@ struct Traits_apply_xop_sll
     AIR_Status
     execute(Executive_Context& ctx, AVMC_Queue::Uparam up)
       {
+        // This operator is binary.
+        const auto& rhs = ctx.stack().top().dereference_readonly();
+        ctx.stack().pop();
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
+
+        if(rhs.type() != type_integer)
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Invalid shift count (operands were `$1` and `$2`)"),
+              lhs, rhs);
+
+        if(rhs.as_integer() < 0)
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Negative shift count (operands were `$1` and `$2`)"),
+              lhs, rhs);
+
+        if(lhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
+          V_integer count = rhs.as_integer();
+
+          // Shift the operand to the left by `count` bits.
+          uint64_t bits;
+          ::memcpy(&bits, &val, sizeof(val));
+          bits <<=
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
