@@ -2865,7 +2865,7 @@ struct Traits_apply_xop_mul
         // Duplicate elements, using binary exponential backoff.
         while(container.ssize() < rlength)
           container.append(container.begin(),
-              container.begin() + min(rlength - container.ssize(), container.ssize()));
+                container.begin() + ::rocket::min(rlength - container.ssize(), container.ssize()));
       }
 
     ROCKET_FLATTEN static
@@ -3113,84 +3113,37 @@ struct Traits_apply_xop_sll
 
         if(lhs.is_integer()) {
           V_integer& val = lhs.mut_integer();
-          V_integer count = rhs.as_integer();
 
           // Shift the operand to the left by `count` bits.
-          uint64_t bits;
-          ::memcpy(&bits, &val, sizeof(val));
-          bits <<=
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        // This operator is binary.
-        const auto& rhs = ctx.stack().top().dereference_readonly();
-        ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
-
-        // The shift chount must be a non-negative integer.
-        if(!rhs.is_integer())
-          ASTERIA_THROW_RUNTIME_ERROR((
-              "Shift count not valid (operands were `$1` and `$2`)"),
-              lhs, rhs);
-
-        int64_t n = rhs.as_integer();
-        if(n < 0)
-          ASTERIA_THROW_RUNTIME_ERROR((
-              "Negative shift count (operands were `$1` and `$2`)"),
-              lhs, rhs);
-
-        // If the LHS operand is of type `integer`, shift the LHS operand to the left.
-        // Bits shifted out are discarded. Bits shifted in are filled with zeroes.
-        // If the LHS operand is of type `string`, fill space characters in the right
-        // and discard characters from the left. The number of bytes in the LHS operand
-        // will be preserved.
-        switch(bmask32({lhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& val = lhs.mut_integer();
-
-            if(n >= 64) {
-              val = 0;
-            }
-            else {
-              reinterpret_cast<uint64_t&>(val) <<= n;
-            }
-            return air_status_next;
-          }
-
-          case M_string: {
-            ROCKET_ASSERT(lhs.is_string());
-            auto& val = lhs.mut_string();
-
-            if(n >= val.ssize()) {
-              val.assign(val.size(), ' ');
-            }
-            else {
-              val.erase(0, static_cast<size_t>(n));
-              val.append(static_cast<size_t>(n), ' ');
-            }
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Logical left shift not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+          int64_t count = rhs.as_integer();
+          val = (int64_t) ((uint64_t) val << (count & 63));
+          val &= ((count - 64) >> 63);
+          return air_status_next;
         }
+        else if(lhs.is_string()) {
+          V_string& val = lhs.mut_string();
+
+          // Remove characters from the left and insert spaces in the right. The
+          // length of the string is unchanged.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.erase(0, tlen);
+          val.append(tlen, ' ');
+          return air_status_next;
+        }
+        else if(lhs.is_array()) {
+          V_array& val = lhs.mut_array();
+
+          // Remove elements from the left and insert nulls in the right. The
+          // length of the array is unchanged.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.erase(0, tlen);
+          val.append(tlen);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Logical left shift not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
@@ -3219,58 +3172,52 @@ struct Traits_apply_xop_srl
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // The shift chount must be a non-negative integer.
-        if(!rhs.is_integer())
+        if(rhs.type() != type_integer)
           ASTERIA_THROW_RUNTIME_ERROR((
-              "Shift count not valid (operands were `$1` and `$2`)"),
+              "Invalid shift count (operands were `$1` and `$2`)"),
               lhs, rhs);
 
-        int64_t n = rhs.as_integer();
-        if(n < 0)
+        if(rhs.as_integer() < 0)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Negative shift count (operands were `$1` and `$2`)"),
               lhs, rhs);
 
-        // If the LHS operand is of type `integer`, shift the LHS operand to the right.
-        // Bits shifted out are discarded. Bits shifted in are filled with zeroes.
-        // If the LHS operand is of type `string`, fill space characters in the left
-        // and discard characters from the right. The number of bytes in the LHS operand
-        // will be preserved.
-        switch(bmask32({lhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& val = lhs.mut_integer();
+        if(lhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
 
-            if(n >= 64) {
-              val = 0;
-            }
-            else {
-              reinterpret_cast<uint64_t&>(val) >>= n;
-            }
-            return air_status_next;
-          }
-
-          case M_string: {
-            ROCKET_ASSERT(lhs.is_string());
-            auto& val = lhs.mut_string();
-
-            if(n >= val.ssize()) {
-              val.assign(val.size(), ' ');
-            }
-            else {
-              val.pop_back(static_cast<size_t>(n));
-              val.insert(0, static_cast<size_t>(n), ' ');
-            }
-            return air_status_next;
-          }
-
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Logical right shift not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+          // Shift the operand to the right by `count` bits.
+          int64_t count = rhs.as_integer();
+          val = (int64_t) ((uint64_t) val >> (count & 63));
+          val &= ((count - 64) >> 63);
+          return air_status_next;
         }
+        else if(lhs.is_string()) {
+          V_string& val = lhs.mut_string();
+
+          // Remove characters from the right and insert spaces in the left. The
+          // length of the string is unchanged.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.pop_back(tlen);
+          val.insert(0, tlen, ' ');
+          return air_status_next;
+        }
+        else if(lhs.is_array()) {
+          V_array& val = lhs.mut_array();
+
+          // Remove elements from the right and insert nulls in the left. The
+          // length of the array is unchanged.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.pop_back(tlen);
+          val.insert(0, tlen);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Logical right shift not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
@@ -3299,70 +3246,63 @@ struct Traits_apply_xop_sla
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // The shift chount must be a non-negative integer.
-        if(!rhs.is_integer())
+        if(rhs.type() != type_integer)
           ASTERIA_THROW_RUNTIME_ERROR((
-              "Shift count not valid (operands were `$1` and `$2`)"),
+              "Invalid shift count (operands were `$1` and `$2`)"),
               lhs, rhs);
 
-        int64_t n = rhs.as_integer();
-        if(n < 0)
+        if(rhs.as_integer() < 0)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Negative shift count (operands were `$1` and `$2`)"),
               lhs, rhs);
 
-        // If the LHS operand is of type `integer`, shift the LHS operand to the left.
-        // Bits shifted out that equal the sign bit are discarded. Bits shifted out
-        // that don't equal the sign bit cause an exception to be thrown. Bits shifted
-        // in are filled with zeroes.
-        // If the LHS operand is of type `string`, fill space characters in the right.
-        switch(bmask32({lhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& val = lhs.mut_integer();
+        if(lhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
 
-            if(n >= 64) {
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "Integer left shift overflow (operands were `$1` and `$2`)"),
-                  val, n);
-            }
-            else {
-              int bc = static_cast<int>(63 - n);
-              uint64_t out = static_cast<uint64_t>(val) >> bc << bc;
-              uint64_t sgn = static_cast<uint64_t>(val >> 63) << bc;
 
-              if(out != sgn)
-                ASTERIA_THROW_RUNTIME_ERROR((
-                    "Integer left shift overflow (operands were `$1` and `$2`)"),
-                    val, n);
 
-              reinterpret_cast<uint64_t&>(val) <<= n;
-            }
-            return air_status_next;
-          }
 
-          case M_string: {
-            ROCKET_ASSERT(lhs.is_string());
-            auto& val = lhs.mut_string();
 
-            if(n >= static_cast<int64_t>(val.max_size() - val.size())) {
-              ASTERIA_THROW_RUNTIME_ERROR((
-                  "String length overflow (`$1` + `$2` > `$3`)"),
-                  val.size(), n, val.max_size());
-            }
-            else {
-              val.append(static_cast<size_t>(n), ' ');
-            }
-            return air_status_next;
-          }
 
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Arithmetic left shift not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+
+
+
+?
+
+
+#ifdef __SSE2__
+          // The SSE2 shift instructions allow overlarge shift counts.
+          __m128i count = _mm_cvtsi64_si128(rhs.as_integer());
+          val = _mm_cvtsi128_si64(_mm_sll_epi64(_mm_cvtsi64_si128(val), count));
+#else
+          val = (int64_t) ((uint64_t) val << (count & 63));
+          val &= ((count - 64) >> 63);
+#endif
+          return air_status_next;
         }
+        else if(lhs.is_string()) {
+          V_string& val = lhs.mut_string();
+
+          // Insert spaces in the right.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.append(tlen, ' ');
+          return air_status_next;
+        }
+        else if(lhs.is_array()) {
+          V_array& val = lhs.mut_array();
+
+          // Insert nulls in the right.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.append(tlen);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Arithmetic left shift not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
@@ -3391,55 +3331,63 @@ struct Traits_apply_xop_sra
         // This operator is binary.
         const auto& rhs = ctx.stack().top().dereference_readonly();
         ctx.stack().pop();
-        auto& lhs = do_get_first_operand(ctx.stack(), up.u8v[0]);  // assign
+        auto& top = ctx.stack().mut_top();
+        auto& lhs = up.u8v[0] ? top.dereference_mutable() : top.dereference_copy();
 
-        // The shift chount must be a non-negative integer.
-        if(!rhs.is_integer())
+        if(rhs.type() != type_integer)
           ASTERIA_THROW_RUNTIME_ERROR((
-              "Shift count not valid (operands were `$1` and `$2`)"),
+              "Invalid shift count (operands were `$1` and `$2`)"),
               lhs, rhs);
 
-        int64_t n = rhs.as_integer();
-        if(n < 0)
+        if(rhs.as_integer() < 0)
           ASTERIA_THROW_RUNTIME_ERROR((
               "Negative shift count (operands were `$1` and `$2`)"),
               lhs, rhs);
 
-        // If the LHS operand is of type `integer`, shift the LHS operand to the right.
-        // Bits shifted out are discarded. Bits shifted in are filled with the sign bit.
-        // If the LHS operand is of type `string`, discard characters from the right.
-        switch(bmask32({lhs.type()})) {
-          case M_integer: {
-            ROCKET_ASSERT(lhs.is_integer());
-            auto& val = lhs.mut_integer();
+        if(lhs.is_integer()) {
+          V_integer& val = lhs.mut_integer();
 
-            if(n >= 64) {
-              val >>= 63;
-            }
-            else {
-              val >>= n;
-            }
-            return air_status_next;
-          }
 
-          case M_string: {
-            ROCKET_ASSERT(lhs.is_string());
-            auto& val = lhs.mut_string();
 
-            if(n >= val.ssize()) {
-              val.clear();
-            }
-            else {
-              val.pop_back(static_cast<size_t>(n));
-            }
-            return air_status_next;
-          }
 
-          default:
-            ASTERIA_THROW_RUNTIME_ERROR((
-                "Arithmetic right shift not applicable (operands were `$1` and `$2`)"),
-                lhs, rhs);
+
+?
+
+
+
+
+
+
+#ifdef __SSE2__
+          // The SSE2 shift instructions allow overlarge shift counts.
+          __m128i count = _mm_cvtsi64_si128(rhs.as_integer());
+          val = _mm_cvtsi128_si64(_mm_sll_epi64(_mm_cvtsi64_si128(val), count));
+#else
+          val = (int64_t) ((uint64_t) val << (count & 63));
+          val &= ((count - 64) >> 63);
+#endif
+          return air_status_next;
         }
+        else if(lhs.is_string()) {
+          V_string& val = lhs.mut_string();
+
+          // Remove characters from the right.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.pop_back(tlen);
+          return air_status_next;
+        }
+        else if(lhs.is_array()) {
+          V_array& val = lhs.mut_array();
+
+          // Remove elements from the right.
+          size_t tlen = ::rocket::min((size_t) rhs.as_integer(), val.size());
+          val.pop_back(tlen);
+          return air_status_next;
+        }
+        else
+          ASTERIA_THROW_RUNTIME_ERROR((
+              "Arithmetic right shift not applicable (operands were `$1` and `$2`)"),
+              lhs, rhs);
       }
   };
 
